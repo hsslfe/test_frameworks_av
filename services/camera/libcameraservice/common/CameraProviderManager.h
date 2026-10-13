@@ -118,6 +118,9 @@ public:
             const VendorTagSectionVectorType& vts,
             /*out*/
             sp<VendorTagDescriptor>& descriptor);
+
+    status_t appendOverlayTag(const String8& section, const String8& name, int32_t type,
+            const char* propertyOverride);
 };
 
 /**

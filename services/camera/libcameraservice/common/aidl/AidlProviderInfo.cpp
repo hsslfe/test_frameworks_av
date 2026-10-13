@@ -16,6 +16,7 @@
 #include "AidlProviderInfo.h"
 #include "common/HalConversionsTemplated.h"
 #include "common/CameraProviderInfoTemplated.h"
+#include "common/XiaomiVendorTagOverlay.h"
 
 #include <aidl/AidlUtils.h>
 
@@ -240,6 +241,12 @@ status_t AidlProviderInfo::setUpVendorTags() {
                 "received error %s (%d). Camera clients will not be able to use"
                 "vendor tags", __FUNCTION__, strerror(res), res);
         return res;
+    }
+
+    res = appendXiaomiVeuxWhatsAppVendorTags(mVendorTagDescriptor);
+    if (res != OK) {
+        ALOGW("%s: Xiaomi WhatsApp vendor tag overlay failed: %s (%d)", __FUNCTION__,
+                strerror(-res), res);
     }
 
     return OK;

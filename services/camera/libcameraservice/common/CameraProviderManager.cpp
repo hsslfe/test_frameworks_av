@@ -1803,48 +1803,45 @@ status_t CameraProviderManager::ProviderInfo::DeviceInfo3::fixupTorchStrengthTag
 status_t CameraProviderManager::ProviderInfo::DeviceInfo3::fixupManualFlashStrengthControlTags(
             CameraMetadata& ch) {
     status_t res = OK;
+    const bool useCaptureMaxStrength = supportsTorchStrengthControlExt();
+    const int32_t maxLevel = useCaptureMaxStrength ? getTorchMaxStrengthLevelExt() : 1;
+    const int32_t defaultLevel =
+            useCaptureMaxStrength ? getCameraCaptureFlashStrengthLevelExt() : 1;
+
     auto flashSingleStrengthMaxLevelEntry = ch.find(ANDROID_FLASH_SINGLE_STRENGTH_MAX_LEVEL);
-    if (flashSingleStrengthMaxLevelEntry.count == 0) {
-        int32_t flashSingleStrengthMaxLevel = 1;
-        res = ch.update(ANDROID_FLASH_SINGLE_STRENGTH_MAX_LEVEL,
-                &flashSingleStrengthMaxLevel, 1);
+    if (flashSingleStrengthMaxLevelEntry.count == 0 || useCaptureMaxStrength) {
+        res = ch.update(ANDROID_FLASH_SINGLE_STRENGTH_MAX_LEVEL, &maxLevel, 1);
         if (res != OK) {
             ALOGE("%s: Failed to update ANDROID_FLASH_SINGLE_STRENGTH_MAX_LEVEL: %s (%d)",
-                    __FUNCTION__,strerror(-res), res);
+                    __FUNCTION__, strerror(-res), res);
             return res;
         }
     }
     auto flashSingleStrengthDefaultLevelEntry = ch.find(
             ANDROID_FLASH_SINGLE_STRENGTH_DEFAULT_LEVEL);
-    if (flashSingleStrengthDefaultLevelEntry.count == 0) {
-        int32_t flashSingleStrengthDefaultLevel = 1;
-        res = ch.update(ANDROID_FLASH_SINGLE_STRENGTH_DEFAULT_LEVEL,
-                &flashSingleStrengthDefaultLevel, 1);
+    if (flashSingleStrengthDefaultLevelEntry.count == 0 || useCaptureMaxStrength) {
+        res = ch.update(ANDROID_FLASH_SINGLE_STRENGTH_DEFAULT_LEVEL, &defaultLevel, 1);
         if (res != OK) {
             ALOGE("%s: Failed to update ANDROID_FLASH_SINGLE_STRENGTH_DEFAULT_LEVEL: %s (%d)",
-                    __FUNCTION__,strerror(-res), res);
+                    __FUNCTION__, strerror(-res), res);
             return res;
         }
     }
     auto flashTorchStrengthMaxLevelEntry = ch.find(ANDROID_FLASH_TORCH_STRENGTH_MAX_LEVEL);
-    if (flashTorchStrengthMaxLevelEntry.count == 0) {
-        int32_t flashTorchStrengthMaxLevel = 1;
-        res = ch.update(ANDROID_FLASH_TORCH_STRENGTH_MAX_LEVEL,
-                &flashTorchStrengthMaxLevel, 1);
+    if (flashTorchStrengthMaxLevelEntry.count == 0 || useCaptureMaxStrength) {
+        res = ch.update(ANDROID_FLASH_TORCH_STRENGTH_MAX_LEVEL, &maxLevel, 1);
         if (res != OK) {
             ALOGE("%s: Failed to update ANDROID_FLASH_TORCH_STRENGTH_MAX_LEVEL: %s (%d)",
-                    __FUNCTION__,strerror(-res), res);
+                    __FUNCTION__, strerror(-res), res);
             return res;
         }
     }
     auto flashTorchStrengthDefaultLevelEntry = ch.find(ANDROID_FLASH_TORCH_STRENGTH_DEFAULT_LEVEL);
-    if (flashTorchStrengthDefaultLevelEntry.count == 0) {
-        int32_t flashTorchStrengthDefaultLevel = 1;
-        res = ch.update(ANDROID_FLASH_TORCH_STRENGTH_DEFAULT_LEVEL,
-                &flashTorchStrengthDefaultLevel, 1);
+    if (flashTorchStrengthDefaultLevelEntry.count == 0 || useCaptureMaxStrength) {
+        res = ch.update(ANDROID_FLASH_TORCH_STRENGTH_DEFAULT_LEVEL, &defaultLevel, 1);
         if (res != OK) {
             ALOGE("%s: Failed to update ANDROID_FLASH_TORCH_STRENGTH_DEFAULT_LEVEL: %s (%d)",
-                    __FUNCTION__,strerror(-res), res);
+                    __FUNCTION__, strerror(-res), res);
             return res;
         }
     }

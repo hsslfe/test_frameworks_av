@@ -75,6 +75,7 @@
 #include "utils/SessionConfigurationUtils.h"
 #include "utils/TraceHFR.h"
 #include "utils/Utils.h"
+#include "common/CameraProviderExtension.h"
 
 #include <algorithm>
 #include <optional>
@@ -87,6 +88,69 @@ using namespace android::hardware::cameraservice::utils::conversion::aidl;
 
 namespace flags = com::android::internal::camera::flags;
 namespace wm_flags = com::android::window::flags;
+
+static bool captureRequestNeedsFlashStrengthMetadata(const CameraMetadata& metadata) {
+    camera_metadata_ro_entry flashMode = metadata.find(ANDROID_FLASH_MODE);
+    if (flashMode.count > 0) {
+        const uint8_t mode = flashMode.data.u8[0];
+        if (mode == ANDROID_FLASH_MODE_SINGLE || mode == ANDROID_FLASH_MODE_TORCH) {
+            return true;
+        }
+    }
+
+    camera_metadata_ro_entry aeMode = metadata.find(ANDROID_CONTROL_AE_MODE);
+    if (aeMode.count > 0) {
+        const uint8_t mode = aeMode.data.u8[0];
+        if (mode == ANDROID_CONTROL_AE_MODE_ON_AUTO_FLASH ||
+                mode == ANDROID_CONTROL_AE_MODE_ON_ALWAYS_FLASH ||
+                mode == ANDROID_CONTROL_AE_MODE_ON_AUTO_FLASH_REDEYE) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool captureRequestNeedsFlashStrengthSysfs(const CameraMetadata& metadata) {
+    camera_metadata_ro_entry flashMode = metadata.find(ANDROID_FLASH_MODE);
+    if (flashMode.count > 0) {
+        const uint8_t mode = flashMode.data.u8[0];
+        if (mode == ANDROID_FLASH_MODE_SINGLE || mode == ANDROID_FLASH_MODE_TORCH) {
+            return true;
+        }
+    }
+
+    camera_metadata_ro_entry intent = metadata.find(ANDROID_CONTROL_CAPTURE_INTENT);
+    if (intent.count == 0 || intent.data.u8[0] != ANDROID_CONTROL_CAPTURE_INTENT_STILL_CAPTURE) {
+        return false;
+    }
+
+    camera_metadata_ro_entry aeMode = metadata.find(ANDROID_CONTROL_AE_MODE);
+    if (aeMode.count == 0) {
+        return false;
+    }
+
+    const uint8_t mode = aeMode.data.u8[0];
+    return mode == ANDROID_CONTROL_AE_MODE_ON_AUTO_FLASH ||
+            mode == ANDROID_CONTROL_AE_MODE_ON_ALWAYS_FLASH ||
+            mode == ANDROID_CONTROL_AE_MODE_ON_AUTO_FLASH_REDEYE;
+}
+
+static void injectCameraCaptureFlashStrengthLocked(CameraMetadata& metadata) {
+    if (!supportsTorchStrengthControlExt() ||
+            !captureRequestNeedsFlashStrengthMetadata(metadata)) {
+        return;
+    }
+
+    const int32_t strength = getCameraCaptureFlashStrengthLevelExt();
+    metadata.update(ANDROID_FLASH_STRENGTH_LEVEL, &strength, 1);
+
+    // Sysfs only on actual flash/torch capture requests — not every AE-auto preview
+    // frame, and not during configureStreams (that deadlocks CamX flash init).
+    if (captureRequestNeedsFlashStrengthSysfs(metadata)) {
+        applyCameraCaptureFlashStrengthToSysfs();
+    }
+}
 
 namespace android {
 
@@ -396,6 +460,10 @@ status_t Camera3Device::disconnectImpl() {
     if (mCameraServiceWatchdog != NULL) {
         mCameraServiceWatchdog->requestExit();
         mCameraServiceWatchdog.clear();
+    }
+
+    if (supportsTorchStrengthControlExt()) {
+        restoreTorchStrengthSysfsFromPersist();
     }
 
     return res;
@@ -1440,6 +1508,11 @@ status_t Camera3Device::filterParamsAndConfigureLocked(const CameraMetadata& par
     SessionConfigurationUtils::filterParameters(params, mDeviceInfo,
             /*additionalKeys*/{}, mVendorTagId, filteredParams);
 
+    if (!mPrivilegedClient && mOutputStreams.size() > 0) {
+        SessionConfigurationUtils::injectThirdPartyVideoChatSessionParams(
+                mId, mVendorTagId, &filteredParams);
+    }
+
     camera_metadata_entry_t availableSessionKeys = mDeviceInfo.find(
             ANDROID_REQUEST_AVAILABLE_SESSION_KEYS);
 
@@ -2226,6 +2299,10 @@ sp<Camera3Device::CaptureRequest> Camera3Device::createCaptureRequest(
 
     sp<CaptureRequest> newRequest = new CaptureRequest();
     newRequest->mSettingsList = request;
+
+    for (auto& settings : newRequest->mSettingsList) {
+        injectCameraCaptureFlashStrengthLocked(settings.metadata);
+    }
 
     camera_metadata_entry_t inputStreams =
             newRequest->mSettingsList.begin()->metadata.find(ANDROID_REQUEST_INPUT_STREAMS);

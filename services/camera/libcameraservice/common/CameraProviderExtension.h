@@ -21,3 +21,8 @@ extern int32_t getTorchDefaultStrengthLevelExt();
 extern int32_t getTorchMaxStrengthLevelExt();
 extern int32_t getTorchStrengthLevelExt();
 extern void setTorchStrengthLevelExt(int32_t torchStrength, bool enabled);
+
+// Capture-flash helpers used by the Xiaomi camera compatibility fix.
+extern int32_t getCameraCaptureFlashStrengthLevelExt();
+extern void applyCameraCaptureFlashStrengthToSysfs();
+extern void restoreTorchStrengthSysfsFromPersist();

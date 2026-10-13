@@ -50,6 +50,7 @@
 #include <com_android_internal_camera_flags.h>
 
 #include "device3/Camera3OutputUtils.h"
+#include "common/CameraProviderExtension.h"
 #include "utils/SessionConfigurationUtils.h"
 
 #include "system/camera_metadata.h"
@@ -168,11 +169,16 @@ status_t fixupAutoframingTags(CameraMetadata& resultMetadata) {
 
 status_t fixupManualFlashStrengthControlTags(CameraMetadata& resultMetadata) {
     status_t res = OK;
+    if (!supportsTorchStrengthControlExt()) {
+        return res;
+    }
+
+    const int32_t captureStrength = getCameraCaptureFlashStrengthLevelExt();
     camera_metadata_entry strengthLevelEntry =
             resultMetadata.find(ANDROID_FLASH_STRENGTH_LEVEL);
-    if (strengthLevelEntry.count == 0) {
-        const int32_t defaultStrengthLevelEntry = ANDROID_FLASH_STRENGTH_LEVEL;
-        res = resultMetadata.update(ANDROID_FLASH_STRENGTH_LEVEL, &defaultStrengthLevelEntry, 1);
+    if (strengthLevelEntry.count == 0 ||
+            strengthLevelEntry.data.i32[0] < captureStrength) {
+        res = resultMetadata.update(ANDROID_FLASH_STRENGTH_LEVEL, &captureStrength, 1);
         if (res != OK) {
             ALOGE("%s: Failed to update ANDROID_FLASH_STRENGTH_LEVEL: %s (%d)",
                   __FUNCTION__, strerror(-res), res);

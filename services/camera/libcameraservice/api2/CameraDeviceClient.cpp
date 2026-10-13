@@ -951,8 +951,13 @@ binder::Status CameraDeviceClient::isSessionConfigurationSupported(
     }
 
     *status = false;
+    // Query with session parameters for third-party apps so CHI sees
+    // clientName during isStreamCombinationWithSettingsSupported (rear camera 0).
+    const bool checkSessionParams =
+            !mPrivilegedClient &&
+            property_get_bool("persist.vendor.cam.strip3pjfif", true);
     ret = mProviderManager->isSessionConfigurationSupported(mCameraIdStr.c_str(),
-            sessionConfiguration, mOverrideForPerfClass, /*checkSessionParams*/false,
+            sessionConfiguration, mOverrideForPerfClass, checkSessionParams,
             status);
     switch (ret) {
         case OK:

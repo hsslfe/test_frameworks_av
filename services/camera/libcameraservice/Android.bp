@@ -141,7 +141,6 @@ cc_library {
         "common/Camera2ClientBase.cpp",
         "common/CameraDeviceBase.cpp",
         "common/CameraOfflineSessionBase.cpp",
-        "common/CameraProviderExtension.cpp",
         "common/CameraProviderManager.cpp",
         "common/FrameProcessorBase.cpp",
         "common/hidl/HidlProviderInfo.cpp",
@@ -205,6 +204,7 @@ cc_library {
         "utils/CameraTraces.cpp",
         "utils/AutoConditionLock.cpp",
         "utils/SchedulingPolicyUtils.cpp",
+        "common/XiaomiVendorTagOverlay.cpp",
         "utils/SessionConfigurationUtils.cpp",
         "utils/SessionConfigurationUtilsHidl.cpp",
         "utils/TagMonitor.cpp",
@@ -273,7 +273,7 @@ cc_library {
         default: [],
     }),
 
-    whole_static_libs: select(soong_config_variable("libcameraservice", "ext_lib"), {
+    whole_static_libs: select(soong_config_variable("camera", "ext_lib"), {
         any @ flag_val: [flag_val],
         default: ["libcameraservice_ext_lib"],
     }),

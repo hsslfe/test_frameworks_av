@@ -183,6 +183,21 @@ void filterParameters(const CameraMetadata& src, const CameraMetadata& deviceInf
         const std::vector<int32_t>& additionalKeys, metadata_vendor_id_t vendorTagId,
         CameraMetadata& dst);
 
+// Third-party video-chat streams (WhatsApp rear camera on 108MP QCFA, etc.)
+constexpr int32_t kThirdPartyVideoStreamMaxWidth = 1920;
+constexpr int32_t kThirdPartyVideoStreamMaxHeight = 1080;
+
+bool isThirdPartyVideoChatOutputStream(int format, int width, int height);
+
+// After surface format overrides (e.g. RGBA -> IMPLEMENTATION_DEFINED). WhatsApp rear
+// camera often skips YCbCr+JFIF and still triggers ZSLPreviewRaw on HM2 without this.
+void applyThirdPartyQcfaStreamDataspace(bool stripThirdPartyJfif, bool isPriviledgedClient,
+        const std::string& logicalCameraId, int format, int width, int height,
+        android_dataspace* dataSpace);
+
+bool injectThirdPartyVideoChatSessionParams(const std::string& logicalCameraId,
+        metadata_vendor_id_t vendorTagId, CameraMetadata* inOutParams);
+
 status_t overrideDefaultRequestKeys(CameraMetadata *request);
 
 template <typename T> bool contains(std::set<T> container, T value) {

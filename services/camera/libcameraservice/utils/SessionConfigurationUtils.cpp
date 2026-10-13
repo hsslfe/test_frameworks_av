@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+#include <algorithm>
+#include <vector>
+#include <android-base/properties.h>
+#include <android-base/strings.h>
 #include <cutils/properties.h>
 
 #include "SessionConfigurationUtils.h"
@@ -94,6 +98,125 @@ void StreamConfiguration::getStreamConfigurations(
 }
 
 namespace SessionConfigurationUtils {
+
+static bool isPrivilegedCameraPackage() {
+    std::vector<std::string> privilegedClientList = ::android::base::Split(
+            ::android::base::GetProperty("persist.vendor.camera.privapp.list", ""), ",");
+    const std::string packageName = CameraService::getCurrPackageName();
+    return std::find(privilegedClientList.begin(), privilegedClientList.end(), packageName) !=
+            privilegedClientList.end();
+}
+
+bool isThirdPartyVideoChatOutputStream(int format, int width, int height) {
+    if (width > kThirdPartyVideoStreamMaxWidth || height > kThirdPartyVideoStreamMaxHeight) {
+        return false;
+    }
+    return format == HAL_PIXEL_FORMAT_YCbCr_420_888 ||
+            format == HAL_PIXEL_FORMAT_YCrCb_420_SP ||
+            format == HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED;
+}
+
+void applyThirdPartyQcfaStreamDataspace(bool stripThirdPartyJfif, bool isPriviledgedClient,
+        const std::string& logicalCameraId, int format, int width, int height,
+        android_dataspace* dataSpace) {
+    if (dataSpace == nullptr || !stripThirdPartyJfif || isPriviledgedClient) {
+        return;
+    }
+    if (width > kThirdPartyVideoStreamMaxWidth || height > kThirdPartyVideoStreamMaxHeight) {
+        return;
+    }
+    if (format == HAL_PIXEL_FORMAT_BLOB) {
+        return;
+    }
+
+    if (format == HAL_PIXEL_FORMAT_YCbCr_420_888 &&
+            *dataSpace == HAL_DATASPACE_V0_JFIF) {
+        ALOGI("%s: Camera %s: non-priv client small YUV+JFIF stream (%dx%d) - "
+              "remapping dataspace JFIF -> UNKNOWN to avoid heavy ZSL path on "
+              "108MP QCFA sensor",
+              __FUNCTION__, logicalCameraId.c_str(), width, height);
+        *dataSpace = HAL_DATASPACE_UNKNOWN;
+        return;
+    }
+
+    if (format == HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED ||
+            format == HAL_PIXEL_FORMAT_YCbCr_420_888 ||
+            format == HAL_PIXEL_FORMAT_YCrCb_420_SP) {
+        ALOGI("%s: Camera %s: non-priv client small preview stream (format %#x %dx%d) - "
+              "remapping dataspace -> UNKNOWN to avoid ZSLPreviewRaw on 108MP QCFA "
+              "(WhatsApp rear camera)",
+              __FUNCTION__, logicalCameraId.c_str(), format, width, height);
+        *dataSpace = HAL_DATASPACE_UNKNOWN;
+    }
+}
+
+bool injectThirdPartyVideoChatSessionParams(const std::string& logicalCameraId,
+        metadata_vendor_id_t vendorTagId, CameraMetadata* inOutParams) {
+    if (inOutParams == nullptr) {
+        return false;
+    }
+    static const bool kStripThirdPartyJfif =
+            property_get_bool("persist.vendor.cam.strip3pjfif", true);
+    if (!kStripThirdPartyJfif || isPrivilegedCameraPackage()) {
+        return false;
+    }
+
+    sp<VendorTagDescriptor> vendorTags;
+    sp<VendorTagDescriptorCache> vendorTagCache =
+            VendorTagDescriptorCache::getGlobalVendorTagCache();
+    if (vendorTagCache == nullptr ||
+            vendorTagCache->getVendorTagDescriptor(vendorTagId, &vendorTags) != OK ||
+            vendorTags == nullptr) {
+        ALOGW("%s: Camera %s: vendor tag cache unavailable for third-party session params",
+                __FUNCTION__, logicalCameraId.c_str());
+        return false;
+    }
+
+    bool injected = false;
+
+    uint32_t thirdPartyTag = 0;
+    if (CameraMetadata::getTagFromName(
+            "com.xiaomi.sessionparams.thirdPartyYUVSnapshot", vendorTags.get(),
+            &thirdPartyTag) == OK) {
+        const uint8_t enabled = 1;
+        if (inOutParams->update(thirdPartyTag, &enabled, 1) == OK) {
+            ALOGI("%s: Camera %s: sessionParams thirdPartyYUVSnapshot=1",
+                    __FUNCTION__, logicalCameraId.c_str());
+            injected = true;
+        } else {
+            ALOGE("%s: Camera %s: failed to set thirdPartyYUVSnapshot",
+                    __FUNCTION__, logicalCameraId.c_str());
+        }
+    } else {
+        ALOGW("%s: Camera %s: thirdPartyYUVSnapshot vendor tag missing in HAL",
+                __FUNCTION__, logicalCameraId.c_str());
+    }
+
+    const std::string packageName = CameraService::getCurrPackageName();
+    if (!packageName.empty() && packageName != "<unknown>") {
+        uint32_t clientNameTag = 0;
+        if (CameraMetadata::getTagFromName(
+                "com.xiaomi.sessionparams.clientName", vendorTags.get(),
+                &clientNameTag) == OK) {
+            std::vector<uint8_t> clientNameBytes(packageName.begin(), packageName.end());
+            clientNameBytes.push_back('\0');
+            if (inOutParams->update(clientNameTag, clientNameBytes.data(),
+                    clientNameBytes.size()) == OK) {
+                ALOGI("%s: Camera %s: sessionParams clientName=%s",
+                        __FUNCTION__, logicalCameraId.c_str(), packageName.c_str());
+                injected = true;
+            } else {
+                ALOGE("%s: Camera %s: failed to set clientName session param",
+                        __FUNCTION__, logicalCameraId.c_str());
+            }
+        } else {
+            ALOGW("%s: Camera %s: clientName vendor tag missing in HAL",
+                    __FUNCTION__, logicalCameraId.c_str());
+        }
+    }
+
+    return injected;
+}
 
 int32_t PERF_CLASS_LEVEL =
         property_get_int32("ro.odm.build.media_performance_class", 0);
@@ -553,6 +676,11 @@ binder::Status createConfiguredSurface(
                 __FUNCTION__, logicalCameraId.c_str(), format);
         format = HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED;
     }
+
+    static const bool kStripThirdPartyJfif =
+            property_get_bool("persist.vendor.cam.strip3pjfif", true);
+    applyThirdPartyQcfaStreamDataspace(kStripThirdPartyJfif, isPriviledgedClient,
+            logicalCameraId, format, width, height, &dataSpace);
     std::unordered_set<int32_t> overriddenSensorPixelModes;
     if (checkAndOverrideSensorPixelModesUsed(sensorPixelModesUsed, format, width, height,
             physicalCameraMetadata, &overriddenSensorPixelModes) != OK) {
@@ -974,7 +1102,20 @@ binder::Status convertToHALStreamCombination(
         filterParameters(sessionConfiguration.getSessionParameters(), deviceInfo,
                 additionalKeys, vendorTagId, filteredParams);
 
+        if (!isPriviledgedClient && !streamConfiguration.streams.empty()) {
+            injectThirdPartyVideoChatSessionParams(logicalCameraId, vendorTagId, &filteredParams);
+        }
+
         camera_metadata_t* metadata = const_cast<camera_metadata_t*>(filteredParams.getAndLock());
+        uint8_t *metadataP = reinterpret_cast<uint8_t*>(metadata);
+        streamConfiguration.sessionParams.metadata.assign(metadataP,
+                metadataP + get_camera_metadata_size(metadata));
+    } else if (!isPriviledgedClient && !streamConfiguration.streams.empty()) {
+        // isSessionConfigurationSupported() passes checkSessionParams=false; CHI still
+        // needs clientName in streamConfiguration.sessionParams.
+        CameraMetadata sessionParams;
+        injectThirdPartyVideoChatSessionParams(logicalCameraId, vendorTagId, &sessionParams);
+        camera_metadata_t* metadata = const_cast<camera_metadata_t*>(sessionParams.getAndLock());
         uint8_t *metadataP = reinterpret_cast<uint8_t*>(metadata);
         streamConfiguration.sessionParams.metadata.assign(metadataP,
                 metadataP + get_camera_metadata_size(metadata));
@@ -1241,7 +1382,7 @@ void filterParameters(const CameraMetadata& src, const CameraMetadata& deviceInf
     const CameraMetadata params(src);
     camera_metadata_ro_entry_t availableSessionKeys = deviceInfo.find(
             ANDROID_REQUEST_AVAILABLE_SESSION_KEYS);
-    CameraMetadata filteredParams(availableSessionKeys.count);
+    CameraMetadata filteredParams(availableSessionKeys.count + 8, 32);
     camera_metadata_t *meta = const_cast<camera_metadata_t *>(
             filteredParams.getAndLock());
     set_camera_metadata_vendor_id(meta, vendorTagId);

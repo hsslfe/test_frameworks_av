@@ -107,6 +107,11 @@ namespace {
     const char* kVirtualDeviceBackCameraId = "0";
     const char* kVirtualDeviceFrontCameraId = "1";
     const char* kUnknownPackageName = "<unknown>";
+    void updateVendorCameraClientNameProperty(const std::string& clientPackageName) {
+        const char* val = (clientPackageName.empty() || clientPackageName == kUnknownPackageName) ? "" : clientPackageName.c_str();
+        property_set("persist.vendor.camera.clientname", val);
+        property_set("persist.vendor.camera.pkgname", val);
+    }
 
     android::PermissionChecker::PermissionResult appOpModeToPermissionResult(int32_t res) {
         switch (res) {
@@ -2587,6 +2592,7 @@ Status CameraService::connectHelper(const sp<CALLBACK>& cameraCb, const std::str
             clientAttribution.packageName.value_or(kUnknownPackageName);
 
     sCurrPackageName = clientPackageName;
+    updateVendorCameraClientNameProperty(clientPackageName);
 
     {
         // Acquire mServiceLock and prevent other clients from connecting
@@ -2654,6 +2660,22 @@ Status CameraService::connectHelper(const sp<CALLBACK>& cameraCb, const std::str
 
         // give flashlight a chance to close devices if necessary.
         mFlashlight->prepareDeviceOpen(cameraId);
+
+        // Turn off torch for any other cameras because of shared resource conflicts
+        {
+            Mutex::Autolock al(mTorchClientMapMutex);
+            for (size_t i = 0; i < mTorchClientMap.size(); i++) {
+                std::string torchCameraId = mTorchClientMap.keyAt(i);
+                ALOGI("Turning off torch for camera %s because camera %s is being opened",
+                        torchCameraId.c_str(), cameraId.c_str());
+                mFlashlight->setTorchMode(torchCameraId, false);
+                sp<IBinder> clientBinder = mTorchClientMap.valueAt(i);
+                if (clientBinder != nullptr) {
+                    clientBinder->unlinkToDeath(this);
+                }
+            }
+            mTorchClientMap.clear();
+        }
 
         int portraitRotation;
         auto deviceVersionAndTransport =
@@ -4646,6 +4668,8 @@ status_t CameraService::BasicClient::notifyCameraClosing() {
     // Notify listeners of camera open/close status
     sCameraService->updateOpenCloseStatus(mCameraIdStr, false /*open*/, getPackageName(),
             mSharedMode);
+
+    updateVendorCameraClientNameProperty(std::string());
 
     return OK;
 }
